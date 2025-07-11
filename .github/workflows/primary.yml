@@ -7,47 +7,9 @@ on:
     branches: [main]
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4.1.7
-
-      - name: Set up Python
-        uses: actions/setup-go@v4
-        with:
-          go-version: "1.23"
-
-      - name: Cache Go modules
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
-
-      - name: Install gqlgen
-        run: go install github.com/99designs/gqlgen@latest
-
-      - name: Generate GraphQL code
-        run: go run github.com/99designs/gqlgen generate=
-      - name: Build Go binary for AWS Lambda provided.al2023
-        run: |
-          GOOS=linux GOARCH=amd64 go build -ldflags='-s -w' -o bootstrap server.go
-      - name: Upload Lambda artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: lambda-binary-${{ github.sha }}
-          path: bootstrap
-
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    needs:
-      - build
     steps:
       - name: Checkout code
         uses: actions/checkout@v4.1.7
@@ -64,19 +26,13 @@ jobs:
           echo "STACK_NAME=openbrighton-main-web-scraper" >> $GITHUB_ENV
           echo "TEMPLATE=./infra/template.yml" >> $GITHUB_ENV
           echo "SOURCE_BUCKET_NAME=openbrighton-main-web-scraper-source" >> $GITHUB_ENV
-
+          echo "GIT_HASH=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
       - name: Create S3 bucket (idempotent)
         run: |
           aws s3api create-bucket --bucket "$SOURCE_BUCKET_NAME" --region "$AWS_REGION" 2>&1 | grep -v 'BucketAlreadyOwnedByYou'
 
-      - name: Download Lambda artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: lambda-binary-${{ github.sha }}
-      - name: Set Git commit hash
-        run: echo "GIT_HASH=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
-      - name: Zip Lambda binary
-        run: zip bootstrap-$GIT_HASH.zip bootstrap
+      - name: Zip Lambda handler
+        run: zip bootstrap-$GIT_HASH.zip main.py
       - name: Upload to S3
         run: |
           aws s3 cp bootstrap-$GIT_HASH.zip s3://$SOURCE_BUCKET_NAME/
